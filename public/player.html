@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Course Player</title>
+  <link rel="stylesheet" href="https://vjs.zencdn.net/8.6.1/video-js.css" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+      user-select: none;
+    }
+
+    #player {
+      width: 100vw;
+      height: 100vh;
+      position: relative; /* Needed for absolute children */
+    }
+
+    .vjs-control-bar {
+      font-size: 1.5em;
+    }
+
+    .vjs-next-button.vjs-control {
+      background: none;
+      border: none;
+      padding: 0 12px;
+      color: white;
+      cursor: pointer;
+      font-size: 1.2em;
+    }
+
+    .vjs-next-button:hover {
+      color: #1db954;
+    }
+
+    .vjs-progress-control {
+      flex: 1 1 auto !important;
+    }
+
+    .vjs-volume-panel,
+    .vjs-fullscreen-control {
+      flex: 0 0 auto !important;
+    }
+
+    .vjs-control {
+      min-width: auto !important;
+    }
+
+    .custom-modal,
+    .skip-icon {
+      position: absolute;
+      z-index: 9999;
+      user-select: none;
+    }
+
+    .custom-modal {
+      display: none;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      justify-content: center;
+      align-items: center;
+    }
+
+    .custom-modal-content {
+      background-color: #fff;
+      padding: 20px 30px;
+      border: 1px solid #888;
+      width: 300px;
+      text-align: center;
+      border-radius: 8px;
+    }
+
+    .custom-modal-content button {
+      margin-top: 15px;
+      padding: 6px 14px;
+      border: none;
+      background-color: #444;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .custom-modal-content button:hover {
+      background-color: #222;
+    }
+
+    .skip-icon {
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 2.5rem;
+      color: white;
+      background: rgba(0,0,0,0.5);
+      padding: 8px 14px;
+      border-radius: 8px;
+      display: none;
+    }
+
+    #skip-left { left: 20%; }
+    #skip-right { right: 20%; }
+    .vjs-next-button {
+  font-size: 18px;
+  margin: 0 6px;
+}
+.vjs-control-bar {
+  font-size: 1.4em;
+}
+
+.vjs-control {
+  margin: 0 6px;
+}
+  </style>
+</head>
+
+<body oncontextmenu="return false">
+  <div style="height: 100vh; width: 100vw;">
+    <video id="player" class="video-js" controls preload="auto" playsinline webkit-playsinline crossorigin>
+      <source src="" id="videoSource" type="video/mp4" />
+    </video>
+
+    <!-- Skip icons inside player -->
+    <div id="skip-left" class="skip-icon">⏪ -10s</div>
+    <div id="skip-right" class="skip-icon">+10s ⏩</div>
+
+    <!-- Modals inside video container -->
+    <div id="noNextModal" class="custom-modal"><div class="custom-modal-content">
+      <p>No next video found.</p>
+      <button onclick="closeModal('noNextModal')">OK</button>
+    </div></div>
+
+    <div id="noPrevModal" class="custom-modal"><div class="custom-modal-content">
+      <p>No previous video found.</p>
+      <button onclick="closeModal('noPrevModal')">OK</button>
+    </div></div>
+  </div>
+
+  <script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
+<script>
+const params = new URLSearchParams(window.location.search);
+let video = params.get('video');
+const courseName = params.get('courseName');
+
+if (!video) throw new Error("No video");
+
+// 🔥 FIX STREAMING URL
+video = video.replace("/upload/", "/upload/f_auto,q_auto,fl_streaming/");
+
+document.getElementById("videoSource").src = video;
+
+const player = videojs('player');
+
+// 🔥 ROTATE
+function forceRotate() {
+  const el = player.el();
+
+  if (el.requestFullscreen) el.requestFullscreen();
+
+  if (screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock("landscape").catch(() => {});
+  }
+}
+
+// 🔥 MODALS
+function showModal(id) {
+  document.getElementById(id).style.display = "flex";
+}
+function closeModal(id) {
+  document.getElementById(id).style.display = "none";
+}
+
+// 🔥 FETCH NEXT/PREV
+async function getVideo(order) {
+  try {
+    const res = await fetch('/api/auth/next_prev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current: video, courseName, order })
+    });
+
+    const data = await res.json();
+
+    if (order === "next") {
+      if (data.next) {
+        window.location.href = `?video=${data.next}&courseName=${courseName}`;
+      } else {
+        showModal("noNextModal"); // ✅ clean UI
+      }
+    }
+
+    if (order === "prev") {
+      if (data.previous) {
+        window.location.href = `?video=${data.previous}&courseName=${courseName}`;
+      } else {
+        showModal("noPrevModal"); // ✅ clean UI
+      }
+    }
+
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// 🔥 ADD BUTTONS (FIXED WAY)
+player.ready(() => {
+  const Button = videojs.getComponent('Button');
+
+  // PREV
+  const PrevButton = videojs.extend(Button, {
+    constructor: function() {
+      Button.apply(this, arguments);
+      this.controlText("Previous");
+      this.el().innerHTML = "⏮";
+    },
+    handleClick: function() {
+      getVideo("prev");
+    }
+  });
+
+  // NEXT
+  const NextButton = videojs.extend(Button, {
+    constructor: function() {
+      Button.apply(this, arguments);
+      this.controlText("Next");
+      this.el().innerHTML = "⏭";
+    },
+    handleClick: function() {
+      getVideo("next");
+    }
+  });
+
+  // ROTATE
+  const RotateButton = videojs.extend(Button, {
+    constructor: function() {
+      Button.apply(this, arguments);
+      this.controlText("Rotate");
+      this.el().innerHTML = "🔄";
+    },
+    handleClick: function() {
+      forceRotate();
+    }
+  });
+
+  videojs.registerComponent('PrevButton', PrevButton);
+  videojs.registerComponent('NextButton', NextButton);
+  videojs.registerComponent('RotateButton', RotateButton);
+
+  player.getChild('controlBar').addChild('PrevButton', {}, 0);
+  player.getChild('controlBar').addChild('NextButton', {}, 1);
+  player.getChild('controlBar').addChild('RotateButton', {}, 2);
+
+  player.on('play', forceRotate);
+});
+
+// 🔥 DOUBLE TAP SKIP + VISUAL
+let lastTap = 0;
+
+player.el().addEventListener("touchstart", (e) => {
+  const now = Date.now();
+  const x = e.touches[0].clientX;
+  const width = window.innerWidth;
+
+  if (now - lastTap < 300) {
+    if (x < width / 2) {
+      player.currentTime(player.currentTime() - 10);
+      showSkip("left");
+    } else {
+      player.currentTime(player.currentTime() + 10);
+      showSkip("right");
+    }
+  }
+
+  lastTap = now;
+});
+
+function showSkip(side) {
+  const el = document.getElementById(`skip-${side}`);
+  el.style.display = "block";
+  setTimeout(() => el.style.display = "none", 500);
+}
+
+// 🔥 AUTO NEXT (NETFLIX STYLE)
+player.on('ended', async () => {
+  try {
+    const res = await fetch('/api/auth/next_prev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current: video, courseName, order: "next" })
+    });
+
+    const data = await res.json();
+
+    if (data.next) {
+      const modal = document.createElement("div");
+      modal.style = `
+        position:absolute;
+        bottom:20%;
+        left:50%;
+        transform:translateX(-50%);
+        background:rgba(0,0,0,0.8);
+        padding:20px;
+        color:white;
+        border-radius:10px;
+        z-index:9999;
+      `;
+      modal.innerHTML = `
+        <p>Next video in 5s...</p>
+        <button onclick="window.location.href='?video=${data.next}&courseName=${courseName}'">Play Now</button>
+      `;
+      document.body.appendChild(modal);
+
+      setTimeout(() => {
+        window.location.href = `?video=${data.next}&courseName=${courseName}`;
+      }, 5000);
+    } else {
+      showModal("noNextModal");
+    }
+
+  } catch (e) {
+    console.error(e);
+  }
+});
+</script>
+</body>
+</html>
