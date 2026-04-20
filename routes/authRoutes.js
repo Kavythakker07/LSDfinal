@@ -3,7 +3,7 @@ const express = require("express");
 
 const upload = require("../middleware/upload");
 
-const {sendResetOTP, verifyResetOTP,registerUser,verifyOTPAndRegister,loginUser,resetPass,updateProfile,addTask,getSchedule ,deleteTask,toggleDone,addCourses,buyCourse,getUserCourses,getAllCourses,getAllComments,getCommentsReplies,currentSelectedCourse,createAnAnnouncement,uploadVideo,videoOrder,mcqAns,setMcq,getMcq,selectedCourseforDelete,createLiveSessions,getLiveSessions,getAllAnnouncements,getSignature,comments,addReply,addFaq, getFaq, resendOTP} = require("../controllers/authController"); // ✅ Correct Import
+const {sendResetOTP, verifyResetOTP,registerUser,verifyOTPAndRegister,loginUser,resetPass,updateProfile,addTask,getSchedule ,deleteTask,toggleDone,addCourses,buyCourse,getUserCourses,getAllCourses,getAllComments,getCommentsReplies,currentSelectedCourse,createAnAnnouncement,getFreeCourses,uploadVideo,videoOrder,mcqAns,setMcq,getMcq,selectedCourseforDelete,createLiveSessions,getLiveSessions,getAllAnnouncements,getSignature,comments,addReply,addFaq, getFaq, resendOTP} = require("../controllers/authController"); // ✅ Correct Import
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
 
@@ -73,6 +73,8 @@ router.post("/saveUserCourse", verifyToken, async (req, res) => {
   }
 });
 router.post("/getUserCourses",getUserCourses)
+router.post("/getFreeCourses",getFreeCourses)
+
 router.post("/selectedCourseforDelete",selectedCourseforDelete)
 router.post("/createOrder", verifyToken, async (req, res) => {
   try {
@@ -149,6 +151,7 @@ router.post("/verifyPayment",verifyToken, async (req, res) => {
 });
 
  router.get("/getAllCourses", getAllCourses);
+ 
  router.get('/version', (req, res) => {
   // return res.json({ requiredVersion: process.env.EXPO_PUBLIC_REQ_VERSION || '1.0.0' });
   return res.json({ requiredVersion:   process.env.EXPO_PUBLIC_REQ_VERSION || '1.0.0' });
