@@ -805,6 +805,50 @@ const getUserCourses = async (req, res) => {
   }
 };
 
+const getFreeCourses = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    
+    console.log("email",email)
+
+    const userDetailsFind = await user.findOne({ email });
+    const adminDetailsFind = await admin.findOne({ email });
+    const freeCourses = await courses.find({fees:0})
+
+    if (!userDetailsFind&&!adminDetailsFind) {
+      return res.status(404).json({ message: "User||Admin not found" });
+    }
+
+
+    // User has an array of course titles, like ["D", "ReactJS", ...]
+    if(freeCourses){
+  
+
+    return res.status(200).json({
+
+      success:true,
+      message: "success",
+      courses: freeCourses,
+    });
+    }
+ 
+    else{
+      return res.status(404).json({
+        message:"No course found"
+      })
+    }
+
+
+    // Get only the matching courses
+  
+
+  } catch (err) {
+    console.error("❌ Error in getUserCourses:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 const getAllCourses = async (req, res) => {
   try {
     const allCourses = await courses.find(); // assuming "Course" is your model
@@ -1496,6 +1540,7 @@ module.exports = {
   addCourses,
   buyCourse,
   getUserCourses,
+  getFreeCourses,
   getAllCourses,
   currentSelectedCourse,
   createAnAnnouncement,
