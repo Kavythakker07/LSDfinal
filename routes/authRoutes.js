@@ -160,6 +160,8 @@ router.post("/verifyPayment",verifyToken, async (req, res) => {
  router.post("/getComments", getAllComments);
  router.post("/getCommentsReplies", getCommentsReplies);
 
+router.post("/addComment",comments)
+
 
 router.post("/currentSelectedCourse",currentSelectedCourse)
 router.post("/createAnAnnouncement", createAnAnnouncement);
