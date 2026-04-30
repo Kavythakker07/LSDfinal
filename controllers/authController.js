@@ -861,7 +861,7 @@ const getAllCourses = async (req, res) => {
 };
 
 const getAllComments = async (req, res) => {
-  const {courseName,videoName,title}=req.body
+  const {courseName,title}=req.body
   try {
     const course = await courses.findOne({ title: courseName });
 
