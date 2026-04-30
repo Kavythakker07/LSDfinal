@@ -1413,14 +1413,14 @@ console.log("son of sardaar",userCourses)
 
 const comments = async (req, res) => {
   try {
-    const { user, admin, courseName, videoName, comment, title } = req.body;
+    const { user, courseName,  comment, videoTitle } = req.body;
     const findCourse = await courses.findOne({ title: courseName });
 // console.log("user",user.username)
     if (!findCourse) {
       return res.status(404).json({ message: "Course not found" });
     }
 
-    const video = findCourse.videos.find(v => v.title === title);
+    const video = findCourse.videos.find(v => v.title === videoTitle);
 
     if (!video) {
       return res.status(404).json({ message: "Video not found" });
@@ -1428,7 +1428,7 @@ const comments = async (req, res) => {
 
     if(user){
  const newComment = {
-      user: user.username || admin.adminUsername || 'Anonymous',
+      user: user || 'Anonymous',
       text: comment,
       timestamp: new Date(),
       replies: []
@@ -1437,16 +1437,7 @@ const comments = async (req, res) => {
     video.comments.push(newComment);
 
     }
-    else if(admin){
-       const newComment = {
-      user: admin.adminUsername || 'Anonymous',
-      text: comment,
-      timestamp: new Date(),
-      replies: []
-    };
-    video.comments.push(newComment);
-
-    }
+  
 
     else{
       res.status(200).json({message:"something went wrong"})
@@ -1498,6 +1489,8 @@ const addReply = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+
 const addFaq = async (req, res) => {
 const { question, answer } = req.body;
   if (!question?.trim()) return res.status(400).json({ message: 'Question is required' });
