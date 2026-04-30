@@ -168,6 +168,7 @@ router.post("/createAnAnnouncement", createAnAnnouncement);
 router.post("/getAllAnnouncements", getAllAnnouncements);
 
 router.post("/uploadVideo", upload.single("video"), uploadVideo);
+router.get("/getComments", getAllComments)
 
 router.post("/next_prev",videoOrder)
 router.post("/mcqans",mcqAns)
