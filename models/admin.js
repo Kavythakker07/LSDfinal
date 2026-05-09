@@ -23,7 +23,11 @@ schedule: [
 ],
 currentVersion:{
     type: String, default: ""
-  }
+  },
+    refreshToken: {
+  type: String,
+  default: null
+}
 
 }, { timestamps: true });
 
