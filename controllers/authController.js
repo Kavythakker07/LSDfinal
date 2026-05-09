@@ -7,7 +7,10 @@ const admin = require("../models/admin");
 const courses = require("../models/courses");
 const McqBank= require("../models/McqBank");
 const faq= require("../models/faq");
-
+const {
+  logError,
+  logAdminAction
+} = require("../utils/loggers");
 
 const LiveSession = require("../models/liveSessionsTime");
 const twilio = require('twilio');
@@ -152,8 +155,10 @@ const verifyOTPAndRegister = async (req, res) => {
     //   return res.status(400).json({ message: `Invalid OTP Mobile` });
     // }
     const adminPass=process.env.ADMIN_PASS
-const isPasswordValid = bcrypt.compare(adminPass, hashedPassword);
-
+const isPasswordValid = await bcrypt.compare(
+  adminPass,
+  hashedPassword
+);
 if(!isPasswordValid){
   res.status(404).json({message:process.env.ADMIN_PASS+hashedPassword})
 }
@@ -255,65 +260,377 @@ const loginUser = async (req, res) => {
     const { email, password, currentAppVersionActual } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ message: "Email and password required." });
+      return res.status(400).json({
+        message: "Email and password required."
+      });
     }
 
-    const existingUser = await user.findOne({ email });
-    const existingAdmin = await admin.findOne({ email });
+    /*
+    =================================
+    USER LOGIN
+    =================================
+    */
 
-    // ✅ USER LOGIN
+    const existingUser = await user.findOne({ email });
+
     if (existingUser) {
-      const isPasswordValid = await bcrypt.compare(password, existingUser.password);
+      const isPasswordValid = await bcrypt.compare(
+        password,
+        existingUser.password
+      );
+
       if (!isPasswordValid) {
-        return res.status(401).json({ message: "Invalid password or email." });
+        return res.status(401).json({
+          message: "Invalid password or email."
+        });
       }
 
       existingUser.currentVersion = currentAppVersionActual;
-      await existingUser.save();
 
-      // 🔥 CREATE TOKEN
-      const token = jwt.sign(
-        { id: existingUser._id, email: existingUser.email },
-        process.env.JWT_SECRET,
-        { expiresIn: "7d" }
+      /*
+      USER ACCESS TOKEN
+      */
+
+      const accessToken = jwt.sign(
+        {
+          id: existingUser._id,
+          email: existingUser.email,
+          role: "user"
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        {
+          expiresIn: "15m"
+        }
       );
 
-      return res.status(200).json({
-        message: "Login successful!",
-        user: existingUser,
-        token: token // 🔥 IMPORTANT
-      });
+      /*
+      USER REFRESH TOKEN
+      */
+
+      const refreshToken = jwt.sign(
+        {
+          id: existingUser._id,
+          role: "user"
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        {
+          expiresIn: "30d"
+        }
+      );
+
+      existingUser.refreshToken = refreshToken;
+      await existingUser.save();
+
+     return res.status(200).json({
+  success: true,
+  message: "Login successful",
+  user: {
+    username: existingUser.username,
+    email: existingUser.email,
+    avatar: existingUser.avatar,
+    bio: existingUser.bio,
+    rank: existingUser.rank,
+    courses: existingUser.courses,
+    currentVersion: existingUser.currentVersion
+  },
+  accessToken,
+  refreshToken
+});
     }
 
-    // ✅ ADMIN LOGIN
+    /*
+    =================================
+    ADMIN LOGIN
+    =================================
+    */
+
+    const existingAdmin = await admin.findOne({ email });
+
     if (existingAdmin) {
-      const isPasswordValid = await bcrypt.compare(password, existingAdmin.password);
+      const isPasswordValid = await bcrypt.compare(
+        password,
+        existingAdmin.password
+      );
+
       if (!isPasswordValid) {
-        return res.status(401).json({ message: "Invalid password or email." });
+        return res.status(401).json({
+          message: "Invalid password or email."
+        });
       }
 
       existingAdmin.currentVersion = currentAppVersionActual;
-      await existingAdmin.save();
 
-      // 🔥 CREATE TOKEN
-      const token = jwt.sign(
-        { id: existingAdmin._id, email: existingAdmin.email },
-        process.env.JWT_SECRET,
-        { expiresIn: "30d" }
+      /*
+      ADMIN ACCESS TOKEN
+      More strict security
+      */
+
+      const accessToken = jwt.sign(
+        {
+          id: existingAdmin._id,
+          email: existingAdmin.email,
+          role: "admin"
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        {
+          expiresIn: "10m"
+        }
       );
 
-      return res.status(200).json({
-        message: "Login successful for admin!",
-        admin: existingAdmin,
-        token: token // 🔥 IMPORTANT
+      /*
+      ADMIN REFRESH TOKEN
+      Shorter than users
+      */
+
+      const refreshToken = jwt.sign(
+        {
+          id: existingAdmin._id,
+          role: "admin"
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        {
+          expiresIn: "15d"
+        }
+      );
+
+      existingAdmin.refreshToken = refreshToken;
+      await existingAdmin.save();
+
+ return res.status(200).json({
+  success: true,
+  message: "Login successful for admin",
+  admin: {
+    adminUsername: existingAdmin.adminUsername,
+    email: existingAdmin.email,
+    avatar: existingAdmin.avatar,
+    bio: existingAdmin.bio,
+    currentVersion: existingAdmin.currentVersion
+  },
+  accessToken,
+  refreshToken
+});
+    }
+
+    return res.status(404).json({
+      message: "Email doesn't exist"
+    });
+
+  } catch (error) {
+    console.error("Login Error:", error);
+
+    return res.status(500).json({
+      message: "Internal server error"
+    });
+  }
+};
+
+
+const refreshToken = async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({
+        message: "No refresh token provided"
       });
     }
 
-    return res.status(401).json({ message: "Email doesn't exist" });
+    /*
+    VERIFY REFRESH TOKEN
+    */
+
+    const decoded = jwt.verify(
+      refreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+
+    /*
+    CHECK ROLE
+    */
+
+    let existingUser = null;
+    let existingAdmin = null;
+
+    if (decoded.role === "user") {
+      existingUser = await user.findById(decoded.id);
+
+      if (!existingUser) {
+        return res.status(404).json({
+          message: "User not found"
+        });
+      }
+
+      if (existingUser.refreshToken !== refreshToken) {
+        return res.status(403).json({
+          message: "Invalid refresh token"
+        });
+      }
+
+      /*
+      NEW USER ACCESS TOKEN
+      */
+
+      const newAccessToken = jwt.sign(
+        {
+          id: existingUser._id,
+          email: existingUser.email,
+          role: "user"
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        {
+          expiresIn: "15m"
+        }
+      );
+
+      /*
+      ROTATE USER REFRESH TOKEN
+      */
+
+      const newRefreshToken = jwt.sign(
+        {
+          id: existingUser._id,
+          role: "user"
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        {
+          expiresIn: "30d"
+        }
+      );
+
+      existingUser.refreshToken = newRefreshToken;
+      await existingUser.save();
+
+      return res.status(200).json({
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken
+      });
+    }
+
+    /*
+    ADMIN REFRESH FLOW
+    */
+
+    if (decoded.role === "admin") {
+      existingAdmin = await admin.findById(decoded.id);
+
+      if (!existingAdmin) {
+        return res.status(404).json({
+          message: "Admin not found"
+        });
+      }
+
+      if (existingAdmin.refreshToken !== refreshToken) {
+        return res.status(403).json({
+          message: "Invalid refresh token"
+        });
+      }
+
+      /*
+      NEW ADMIN ACCESS TOKEN
+      */
+
+      const newAccessToken = jwt.sign(
+        {
+          id: existingAdmin._id,
+          email: existingAdmin.email,
+          role: "admin"
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        {
+          expiresIn: "10m"
+        }
+      );
+
+      /*
+      ROTATE ADMIN REFRESH TOKEN
+      */
+
+      const newRefreshToken = jwt.sign(
+        {
+          id: existingAdmin._id,
+          role: "admin"
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        {
+          expiresIn: "15d"
+        }
+      );
+
+      existingAdmin.refreshToken = newRefreshToken;
+      await existingAdmin.save();
+
+      return res.status(200).json({
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken
+      });
+    }
+
+    return res.status(403).json({
+      message: "Invalid role"
+    });
 
   } catch (error) {
-    console.error("❌ Error in loginUser:", error);
-    res.status(500).json({ message: "Internal server error" });
+    console.error("Refresh Token Error:", error);
+
+    return res.status(403).json({
+      message: "Refresh token expired. Please login again."
+    });
+  }
+};
+
+
+const logoutUser = async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(200).json({
+        message: "Logout successful"
+      });
+    }
+
+    /*
+    VERIFY TOKEN TO FIND ROLE
+    */
+
+    try {
+      const decoded = jwt.verify(
+        refreshToken,
+        process.env.REFRESH_TOKEN_SECRET
+      );
+
+      if (decoded.role === "user") {
+        const existingUser = await user.findById(decoded.id);
+
+        if (existingUser) {
+          existingUser.refreshToken = null;
+          await existingUser.save();
+        }
+      }
+
+      if (decoded.role === "admin") {
+        const existingAdmin = await admin.findById(decoded.id);
+
+        if (existingAdmin) {
+          existingAdmin.refreshToken = null;
+          await existingAdmin.save();
+        }
+      }
+
+    } catch (err) {
+      console.log("Token already invalid during logout",err);
+    }
+
+    return res.status(200).json({
+      message: "Logout successful"
+    });
+
+  } catch (error) {
+    console.error("Logout Error:", error);
+
+    return res.status(500).json({
+      message: "Logout failed"
+    });
   }
 };
 
@@ -432,76 +749,99 @@ const resetPass = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const { email, bio } = req.body;
-let avatar;
-
-if (req.file) {
-  avatar = req.file.path; // ✅ new upload (Cloudinary)
-} else {
-  avatar = existingUser?.avatar || existingAdmin?.avatar; // ✅ keep old
-}console.log("💾 File saved as:", avatar);
 
     if (!email) {
-      return res.status(400).json({ success: false, message: "Email is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Email is required."
+      });
     }
 
+    // ✅ FIRST find user/admin
     const existingUser = await user.findOne({ email });
     const existingAdmin = await admin.findOne({ email });
-    console.log(existingUser)
 
-    // ✅ USER
+    if (!existingUser && !existingAdmin) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // ✅ THEN decide avatar
+    let avatar;
+
+    if (req.file) {
+      avatar = req.file.path;
+    } else {
+      avatar =
+        existingUser?.avatar ||
+        existingAdmin?.avatar ||
+        "";
+    }
+
+    /*
+    =================================
+    USER UPDATE
+    =================================
+    */
+
     if (existingUser) {
       if (bio) existingUser.bio = bio;
       if (avatar) existingUser.avatar = avatar;
 
       await existingUser.save();
 
-     return res.json({
-  success: true,
-  user: {
-    username: existingUser.username,
-    email: existingUser.email,
-    avatar: avatar, // ✅ JUST filename, not full URL
-    bio: existingUser.bio,
-    rank: existingUser.rank,
-    credits: existingUser.credits,
-    certificate: existingUser.certificate,
-    createdAt: existingUser.createdAt,
-        currentVersion: existingUser.currentVersion || "1.0.0", // ✅ required!
-        
-
-  },
-});
-
-
+      return res.status(200).json({
+        success: true,
+        message: "Profile updated successfully",
+        user: {
+          username: existingUser.username,
+          email: existingUser.email,
+          avatar: existingUser.avatar,
+          bio: existingUser.bio,
+          rank: existingUser.rank,
+          currentVersion:
+            existingUser.currentVersion || "1.0.0"
+        }
+      });
     }
 
-    // ✅ ADMIN
+    /*
+    =================================
+    ADMIN UPDATE
+    =================================
+    */
+
     if (existingAdmin) {
       if (bio) existingAdmin.bio = bio;
       if (avatar) existingAdmin.avatar = avatar;
 
       await existingAdmin.save();
 
-      return res.json({
+      return res.status(200).json({
         success: true,
+        message: "Admin profile updated successfully",
         admin: {
           adminUsername: existingAdmin.adminUsername,
           email: existingAdmin.email,
-          avatar: avatar, // just filename
+          avatar: existingAdmin.avatar,
           bio: existingAdmin.bio,
-              currentVersion: existingAdmin.currentVersion || "1.0.0",
-
-        },
+          currentVersion:
+            existingAdmin.currentVersion || "1.0.0"
+        }
       });
     }
 
-    return res.status(404).json({ success: false, message: "User not found" });
   } catch (err) {
-    console.error("❌ Update profile error:", err);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    console.error("Update profile error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
 };
-
 
 
 const addTask = async (req, res) => {
@@ -673,25 +1013,93 @@ const toggleDone = async (req, res) => {
 };
 
 
-const addCourses=async(req,res)=>{
-try{
-    const courseData = JSON.parse(req.body.courseData); // 📌 sent as FormData
-const thumbnailFile = req.file?.path;
-const findSameTitled=await courses.findOne({title:courseData.title})
-const addCourseToSirProfile = await admin.findOne({ adminUsername: courseData.instructor });
+const addCourses = async (req, res) => {
+  try {
+    /*
+    =====================================
+    ADMIN SECURITY CHECK
+    =====================================
+    */
 
-console.log("addCourseToSirProfile", addCourseToSirProfile===null);
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized"
+      });
+    }
 
-if (addCourseToSirProfile===null) {
-  return res.status(404).json({ message: "No Instructor from admins like that" });
-}
-if(findSameTitled){return res.status(409).json({message:"Already with this name a course exists"})}
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access only"
+      });
+    }
 
+    /*
+    =====================================
+    GET FORM DATA
+    =====================================
+    */
 
+    const courseData = JSON.parse(req.body.courseData);
+    const thumbnailFile = req.file?.path;
 
-    const addCourses = new courses({
+    /*
+    =====================================
+    VALIDATION
+    =====================================
+    */
+
+    if (!courseData.title || !thumbnailFile) {
+      return res.status(400).json({
+        success: false,
+        message: "Title and thumbnail are required"
+      });
+    }
+
+    /*
+    =====================================
+    CHECK DUPLICATE COURSE
+    =====================================
+    */
+
+    const findSameTitled = await courses.findOne({
+      title: courseData.title
+    });
+
+    if (findSameTitled) {
+      return res.status(409).json({
+        success: false,
+        message: "A course with this title already exists"
+      });
+    }
+
+    /*
+    =====================================
+    CHECK INSTRUCTOR EXISTS
+    =====================================
+    */
+
+    const addCourseToSirProfile = await admin.findOne({
+      adminUsername: courseData.instructor
+    });
+
+    if (!addCourseToSirProfile) {
+      return res.status(404).json({
+        success: false,
+        message: "No instructor admin found with this name"
+      });
+    }
+
+    /*
+    =====================================
+    CREATE COURSE
+    =====================================
+    */
+
+    const newCourse = new courses({
       title: courseData.title.trim(),
-      thumbnail: thumbnailFile, // ✅ correct
+      thumbnail: thumbnailFile,
       description: courseData.description,
       instructor: courseData.instructor,
       category: courseData.category,
@@ -702,32 +1110,76 @@ if(findSameTitled){return res.status(409).json({message:"Already with this name 
       isLive: courseData.isLive,
     });
 
-await addCourses.save()
+    await newCourse.save();
 
-const allCourses =await courses.find(); // get all courses
+    /*
+    =====================================
+    UPDATE INSTRUCTOR PROFILE
+    =====================================
+    */
 
-if(addCourses){
-  res.status(200).json({
-    message:"Added",
-    addedCourse:allCourses
-  })
-}
+    addCourseToSirProfile.courseCreator.push(
+      newCourse.title
+    );
 
-if(addCourses){
+    await addCourseToSirProfile.save();
 
+    /*
+    =====================================
+    ADMIN ACTION LOG
+    =====================================
+    */
 
-addCourseToSirProfile.courseCreator.push(addCourses.title);
-await addCourseToSirProfile.save();
+    logAdminAction({
+      adminEmail: req.user.email,
+      action: "COURSE_ADDED",
+      details: {
+        title: newCourse.title,
+        instructor: newCourse.instructor
+      }
+    });
 
+    /*
+    =====================================
+    GET UPDATED COURSES
+    =====================================
+    */
 
-}
+    const allCourses = await courses.find();
 
-}
-catch (err) {
-    console.error("❌ Get schedule error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    /*
+    =====================================
+    SUCCESS RESPONSE
+    =====================================
+    */
+
+    return res.status(200).json({
+      success: true,
+      message: "Course added successfully",
+      addedCourse: allCourses
+    });
+
+  } catch (error) {
+    /*
+    =====================================
+    ERROR LOG
+    =====================================
+    */
+
+    logError({
+      route: "addCourses",
+      error,
+      extra: {
+        adminEmail: req.user?.email || "unknown"
+      }
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
-}
+};
 const buyCourse=async(req,res)=>{
 const {courseName}=req.body
 
@@ -1025,47 +1477,144 @@ const getSignature = async (req, res) => {
 };
 const uploadVideo = async (req, res) => {
   try {
-    const { title, courseName, videoUrl } = req.body;
+    /*
+    =====================================
+    ADMIN SECURITY CHECK
+    =====================================
+    */
 
-    if (!videoUrl) {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized"
+      });
+    }
+
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access only"
+      });
+    }
+
+    /*
+    =====================================
+    GET REQUEST DATA
+    =====================================
+    */
+
+    const {
+      title,
+      courseName,
+      videoUrl
+    } = req.body;
+
+    /*
+    =====================================
+    VALIDATION
+    =====================================
+    */
+
+    if (!title || !courseName || !videoUrl) {
       return res.status(400).json({
         success: false,
-        message: "No video URL provided",
+        message: "Title, course name and video URL are required"
       });
     }
 
-    const findCourse = await courses.findOne({ title: courseName });
+    /*
+    =====================================
+    FIND COURSE
+    =====================================
+    */
 
-    if (!findCourse) {
-      return res.status(404).json({
-        success: false,
-        message: "Course not found",
-      });
-    }
-
-    // 🔥 OPTIMIZED STREAM URL
-    const finalUrl = videoUrl.replace(
-      "/upload/",
-      "/upload/f_mp4,q_auto,vc_auto/"
-    );
-
-    findCourse.videos.push({
-      title: title,
-      filename: finalUrl,
+    const course = await courses.findOne({
+      title: courseName
     });
 
-    await findCourse.save();
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found"
+      });
+    }
+
+    /*
+    =====================================
+    CHECK DUPLICATE VIDEO
+    =====================================
+    */
+
+    const alreadyExists = course.videos.find(
+      (video) => video.title === title
+    );
+
+    if (alreadyExists) {
+      return res.status(409).json({
+        success: false,
+        message: "Video with this title already exists"
+      });
+    }
+
+    /*
+    =====================================
+    ADD VIDEO
+    =====================================
+    */
+
+    course.videos.push({
+      title,
+      filename: videoUrl
+    });
+
+    await course.save();
+
+    /*
+    =====================================
+    ADMIN ACTION LOG
+    =====================================
+    */
+
+    logAdminAction({
+      adminEmail: req.user.email,
+      action: "VIDEO_UPLOADED",
+      details: {
+        courseName,
+        videoTitle: title
+      }
+    });
+
+    /*
+    =====================================
+    SUCCESS RESPONSE
+    =====================================
+    */
 
     return res.status(200).json({
       success: true,
-      message: "Video saved successfully",
+      message: "Video uploaded successfully"
     });
 
-  } catch (err) {
-    console.error("Upload error:", err);
+  } catch (error) {
+    /*
+    =====================================
+    ERROR LOG
+    =====================================
+    */
+
+    logError({
+      route: "uploadVideo",
+      error,
+      extra: {
+        title: req.body?.title,
+        courseName: req.body?.courseName,
+        adminEmail: req.user?.email || "unknown"
+      }
+    });
+
     return res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Internal server error"
     });
   }
 };
@@ -1116,47 +1665,189 @@ const videoOrder = async (req, res) => {
 
 const setMcq = async (req, res) => {
   try {
-    const { payload,admin } = req.body;
+    /*
+    =====================================
+    ADMIN SECURITY CHECK
+    =====================================
+    */
 
-    if(!admin){
-      return res.status(404).json("No admin found")
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized"
+      });
     }
 
-    const { courseName, question, options, answer } = payload;
-
-    if (!courseName || !question || !options || !answer) {
-      return res.status(400).json({ message: 'All fields are required.' });
-    }
-if (!Array.isArray(options) || !options.includes(answer)) {
-  return res.status(400).json({ message: 'Answer must be one of the provided options.' });
-}
-    const crossCheck = await courses.findOne({title:courseName})
-
-    if(!crossCheck){
-            return res.status(400).json({ message: `Course you chose doesn't exist `});
-
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access only"
+      });
     }
 
-    // Check if course already has an MCQ entry
-    const findTheCourse = await McqBank.findOne({ courseName });
+    /*
+    =====================================
+    GET REQUEST DATA
+    =====================================
+    */
 
-    if (findTheCourse) {
-      // Add question to existing course
-      findTheCourse.questions.push({ question, options, answer });
-      await findTheCourse.save();
-      return res.status(200).json({ success:true,message: 'MCQ added to existing course.', data: findTheCourse });
-    } else {
-      // Create a new MCQ course with this question
-      const newCourse = await McqBank.create({
-        courseName,
-        questions: [{ question, options, answer }]
+    const { payload } = req.body;
+
+    if (!payload) {
+      return res.status(400).json({
+        success: false,
+        message: "Payload is required"
+      });
+    }
+
+    const {
+      courseName,
+      question,
+      options,
+      answer
+    } = payload;
+
+    /*
+    =====================================
+    VALIDATION
+    =====================================
+    */
+
+    if (
+      !courseName ||
+      !question ||
+      !options ||
+      !answer
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required"
+      });
+    }
+
+    if (
+      !Array.isArray(options) ||
+      !options.includes(answer)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Answer must be one of the provided options"
+      });
+    }
+
+    /*
+    =====================================
+    CHECK COURSE EXISTS
+    =====================================
+    */
+
+    const crossCheck = await courses.findOne({
+      title: courseName
+    });
+
+    if (!crossCheck) {
+      return res.status(404).json({
+        success: false,
+        message: "Selected course does not exist"
+      });
+    }
+
+    /*
+    =====================================
+    FIND EXISTING MCQ COURSE
+    =====================================
+    */
+
+    const findTheCourse =
+      await McqBank.findOne({
+        courseName
       });
 
-      return res.status(201).json({ success:true,message: 'New course and MCQ added.', data: newCourse });
+    /*
+    =====================================
+    ADD TO EXISTING COURSE
+    =====================================
+    */
+
+    if (findTheCourse) {
+      findTheCourse.questions.push({
+        question,
+        options,
+        answer
+      });
+
+      await findTheCourse.save();
+
+      logAdminAction({
+        adminEmail: req.user.email,
+        action: "MCQ_ADDED",
+        details: {
+          courseName,
+          question
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "MCQ added to existing course",
+        data: findTheCourse
+      });
     }
-  } catch (err) {
-    console.error('Error in setMcq:', err);
-    return res.status(500).json({ message: 'Internal Server Error' });
+
+    /*
+    =====================================
+    CREATE NEW MCQ COURSE
+    =====================================
+    */
+
+    const newCourse = await McqBank.create({
+      courseName,
+      questions: [
+        {
+          question,
+          options,
+          answer
+        }
+      ]
+    });
+
+    logAdminAction({
+      adminEmail: req.user.email,
+      action: "MCQ_CREATED",
+      details: {
+        courseName,
+        question
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "New course and MCQ added",
+      data: newCourse
+    });
+
+  } catch (error) {
+    /*
+    =====================================
+    ERROR LOG
+    =====================================
+    */
+
+    logError({
+      route: "setMcq",
+      error,
+      extra: {
+        adminEmail: req.user?.email || "unknown",
+        courseName:
+          req.body?.payload?.courseName || "unknown"
+      }
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
 };
 
@@ -1242,27 +1933,139 @@ else{
 
 
 const selectedCourseforDelete = async (req, res) => {
-  const { courseTitle, title } = req.body;
-
   try {
-    const updatedCourse = await courses.findOneAndUpdate(
-      { title: courseTitle },
-      { $pull: { videos: { title: title } } }, // remove video by title
-      { new: true }
+    /*
+    =====================================
+    ADMIN SECURITY CHECK
+    =====================================
+    */
+
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized"
+      });
+    }
+
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access only"
+      });
+    }
+
+    /*
+    =====================================
+    GET REQUEST DATA
+    =====================================
+    */
+
+    const { courseTitle, title } = req.body;
+
+    if (!courseTitle || !title) {
+      return res.status(400).json({
+        success: false,
+        message: "Course title and video title are required"
+      });
+    }
+
+    console.log("📩 Title received:", courseTitle);
+
+    /*
+    =====================================
+    FIND COURSE
+    =====================================
+    */
+
+    const course = await courses.findOne({
+      title: courseTitle
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found"
+      });
+    }
+
+    console.log("🎯 Course found:", course);
+
+    /*
+    =====================================
+    FIND VIDEO
+    =====================================
+    */
+
+    const videoToDelete = course.videos.find(
+      (video) => video.title === title
     );
 
-    if (!updatedCourse) {
-      return res.status(404).json({ message: 'Course not found' });
+    if (!videoToDelete) {
+      return res.status(404).json({
+        success: false,
+        message: "Video not found"
+      });
     }
+
+    /*
+    =====================================
+    DELETE VIDEO FROM ARRAY
+    =====================================
+    */
+
+    course.videos = course.videos.filter(
+      (video) => video.title !== title
+    );
+
+    await course.save();
+
+    /*
+    =====================================
+    ADMIN ACTION LOG
+    =====================================
+    */
+
+    logAdminAction({
+      adminEmail: req.user.email,
+      action: "VIDEO_DELETED",
+      details: {
+        courseTitle,
+        videoTitle: title
+      }
+    });
+
+    /*
+    =====================================
+    SUCCESS RESPONSE
+    =====================================
+    */
 
     return res.status(200).json({
       success: true,
-      message: 'Video removed successfully',
-      updatedCourse
+      message: "Video deleted successfully"
     });
-  } catch (err) {
-    console.error("❌ Error in selectedCourseforDelete:", err);
-    return res.status(500).json({ message: 'Internal server error' });
+
+  } catch (error) {
+    /*
+    =====================================
+    ERROR LOG
+    =====================================
+    */
+
+    logError({
+      route: "selectedCourseforDelete",
+      error,
+      extra: {
+        courseTitle: req.body?.courseTitle,
+        title: req.body?.title,
+        adminEmail: req.user?.email || "unknown"
+      }
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
 };
 
@@ -1552,6 +2355,8 @@ module.exports = {
     getAllComments,
     getCommentsReplies,
     addFaq,
-    getSignature
+    getSignature,
+    refreshToken,
+    logoutUser
 
 };
