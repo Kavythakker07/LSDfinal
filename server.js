@@ -1,18 +1,26 @@
 // app.js or index.js
+require("dotenv").config();
+
+const cookieParser = require("cookie-parser");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-require("dotenv").config({ path: "../.env" });
 const session = require("express-session");
 const path = require("path");
+const helmet = require("helmet");
+const mongoSanitize = require("express-mongo-sanitize");
+const xss = require("xss-clean");
 
 const app = express();
 const LiveSession = require('./models/liveSessionsTime'); // adjust the path
+app.use(cookieParser());
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-
+app.use(helmet());
+app.use(mongoSanitize());
+app.use(xss());
 const baseUploadDir = process.env.RENDER === "true"
   ? "/mnt/data"
   : path.join(__dirname, "uploads");
