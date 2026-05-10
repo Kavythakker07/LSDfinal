@@ -159,9 +159,8 @@ const isPasswordValid = await bcrypt.compare(
   adminPass,
   hashedPassword
 );
-if(!isPasswordValid){
-  res.status(404).json({message:process.env.ADMIN_PASS+hashedPassword})
-}
+
+
 if(username==="DPDS"&&isPasswordValid){
 console.log("as admin")
     const adminReg = new admin({adminUsername:username,email:mailID,password:hashedPassword,phoneNumber:phoneNumber,
@@ -191,7 +190,7 @@ return res.status(200).json({
   
 }
 
-    const newUser = new user({ username, email: mailID, password: hashedPassword ,phoneNumber:phoneNumber
+const newUser = new user({ username, email: mailID, password: hashedPassword ,phoneNumber:phoneNumber
       ,
       currentVersion:currentAppVersion
     });
